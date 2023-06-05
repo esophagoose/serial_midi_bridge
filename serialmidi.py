@@ -1,185 +1,99 @@
 import time
-import queue
+import collections
+import logging
+import argparse
+import os
+
 import rtmidi
 import serial
-import threading
-import logging
-import sys
-import time
-import argparse
-
-# Serial MIDI Bridge
-# Ryan Kojima
 
 
-parser = argparse.ArgumentParser(description = "Serial MIDI bridge")
+class SerialMidiBridge:
+    def __init__(self, device_name, baudrate, midi_in_name, midi_out_name, debug=False):
+        self.name = device_name
+        self.baudrate = baudrate
+        self.input_queue = collections.deque()
+        self.output_queue = collections.deque()
 
-parser.add_argument("--serial_name", type=str, required = True, help = "Serial port name. Required")
-parser.add_argument("--baud", type=int, default=115200, help = "baud rate. Default is 115200")
-parser.add_argument("--midi_in_name", type=str, default = "IAC Bus 1")
-parser.add_argument("--midi_out_name", type=str, default = "IAC Bus 2")
-parser.add_argument("--debug", action = "store_true", help = "Print incoming / outgoing MIDI signals")
+        self.midi_in = rtmidi.MidiIn()
+        self.midi_out = rtmidi.MidiOut()
+        in_port = self.midi_out.get_ports().index(midi_in_name)
+        out_port = self.midi_out.get_ports().index(midi_out_name)
+        self.midi_in.open_port(in_port)
+        self.midi_out.open_port(out_port)
+        self.midi_in.ignore_types(sysex=False, timing=False, active_sense=False)
+        self.midi_in.set_callback(MidiInputHandler(self))
 
-args = parser.parse_args()
+    def get_midi_length(self, message):
+        opcode = message[0]
+        if opcode >= 0xF4:
+            return 1
+        if opcode in [0xF1, 0xF3]:
+            return 2
+        if opcode == 0xF2:
+            return 3
+        if opcode == 0xF0:
+            if message[-1] == 0xF7:
+                return len(message)
 
-thread_running = True
+        opcode = opcode & 0xF0
+        if opcode in [0x80, 0x90, 0xA0, 0xB0, 0xE0]:
+            return 3
+        if opcode in [0xC0, 0xD0]:
+            return 2
 
-# Arguments
-serial_port_name = args.serial_name #'/dev/cu.SLAB_USBtoUART'
-serial_baud = args.baud
-given_port_name_in = args.midi_in_name #"IAC Bus 1"
-given_port_name_out = args.midi_out_name #"IAC Bus 2"
-
-if args.debug:
-    logging.basicConfig(level = logging.DEBUG)
-else:
-    logging.basicConfig(level = logging.INFO)
-
-midi_ready = False
-midiin_message_queue = queue.Queue()
-midiout_message_queue = queue.Queue()
-
-def get_midi_length(message):
-    if len(message) == 0:
         return 100
-    opcode = message[0]
-    if opcode >= 0xf4:
-        return 1
-    if opcode in [ 0xf1, 0xf3 ]:
-        return 2
-    if opcode == 0xf2:
-        return 3
-    if opcode == 0xf0:
-        if message[-1] == 0xf7:
-            return len(message)
 
-    opcode = opcode & 0xf0
-    if opcode in [ 0x80, 0x90, 0xa0, 0xb0, 0xe0 ]:
-        return 3
-    if opcode in [ 0xc0, 0xd0 ]:
-        return 2
+    def write(self, message):
+        logging.debug(f"MIDI -> Serial: {message}")
+        self.device.write(bytearray(message))
 
-    return 100
+    def wait_for_device(self):
+        while not os.path.exists(self.name):
+            time.sleep(0.25)
+        self.device = serial.Serial(self.name, self.baudrate, timeout=0.4)
 
-def serial_writer():
-    while midi_ready == False:
-        time.sleep(0.1)
-    while thread_running:
-        try:
-            message = midiin_message_queue.get(timeout=0.4)
-        except queue.Empty:
-            continue
-        logging.debug(message)
-        value = bytearray(message)
-        ser.write(value)
+    def run(self):
+        self.device = serial.Serial(self.name, self.baudrate, timeout=0.4)
 
-def serial_watcher():
-    receiving_message = []
-    running_status = 0
+        input_buffer = b""
+        while True:
+            try:
+                input_buffer += self.device.read()
+                if not input_buffer:
+                    continue
 
-    while midi_ready == False:
-        time.sleep(0.1)
-
-    while thread_running:
-        data = ser.read()
-        if data:
-            for elem in data:
-                receiving_message.append(elem)
-            #Running status
-            if len(receiving_message) == 1:
-                if (receiving_message[0]&0xf0) != 0:
-                    running_status = receiving_message[0]
-                else:
-                    receiving_message = [ running_status, receiving_message[0] ]
-
-            message_length = get_midi_length(receiving_message)
-            if message_length <= len(receiving_message):
-                logging.debug(receiving_message)
-                midiout_message_queue.put(receiving_message)
-                receiving_message = []
+                message_length = self.get_midi_length(input_buffer)
+                if len(input_buffer) >= message_length:
+                    logging.debug(f"Serial -> MIDI: {input_buffer}")
+                    self.midi_out.send_message(input_buffer[:message_length])
+                    input_buffer = input_buffer[message_length:]
+            except serial.serialutil.SerialException:
+                print("Serial device disconnected! Waiting for reconnect ...")
+                self.wait_for_device()
+                print("Reconnected.")
 
 
-
-class midi_input_handler(object):
-    def __init__(self, port):
-        self.port = port
-        self._wallclock = time.time()
+class MidiInputHandler(object):
+    def __init__(self, bridge):
+        self.bridge = bridge
 
     def __call__(self, event, data=None):
-        message, deltatime = event
-        self._wallclock += deltatime
-        #logging.debug("[%s] @%0.6f %r" % (self.port, self._wallclock, message))
-        midiin_message_queue.put(message)
+        message, _ = event
+        self.bridge.write(message)
 
 
-
-def midi_watcher():
-    global midi_ready, thread_running
-
-    midiin = rtmidi.MidiIn()
-    midiout = rtmidi.MidiOut()
-    available_ports_out = midiout.get_ports()
-    available_ports_in = midiin.get_ports()
-    logging.info("IN : '" + "','".join(available_ports_in) + "'")
-    logging.info("OUT : '" + "','".join(available_ports_out) + "'")
-    logging.info("Hit ctrl-c to exit")
-
-    port_index_in = -1
-    port_index_out = -1
-    for i, s in enumerate(available_ports_in):
-        if given_port_name_in in s:
-            port_index_in = i
-    for i, s in enumerate(available_ports_out):
-        if given_port_name_out in s:
-            port_index_out = i
-
-    if port_index_in == -1:
-        print("MIDI IN Device name is incorrect. Please use listed device name.")
-    if port_index_out == -1:
-        print("MIDI OUT Device name is incorrect. Please use listed device name.")
-    if port_index_in == -1 or port_index_out == -1:
-        thread_running = False
-        midi_ready = True
-        sys.exit()
-
-    midiout.open_port(port_index_out)
-    in_port_name = midiin.open_port(port_index_in)
-
-    midi_ready = True
-
-    midiin.ignore_types(sysex = False, timing = False, active_sense = False)
-    midiin.set_callback(midi_input_handler(in_port_name))
-
-    while thread_running:
-        try:
-            message = midiout_message_queue.get(timeout = 0.4)
-        except queue.Empty:
-            continue
-        midiout.send_message(message)
-
-
-try:
-    ser = serial.Serial(serial_port_name,serial_baud)
-except serial.serialutil.SerialException:
-    print("Serial port opening error.")
-    midi_watcher()
-    sys.exit()
-
-ser.timeout = 0.4
-
-s_watcher = threading.Thread(target = serial_watcher)
-s_writer = threading.Thread(target = serial_writer)
-m_watcher = threading.Thread(target = midi_watcher)
-
-s_watcher.start()
-s_writer.start()
-m_watcher.start()
-
-#Ctrl-C handler
-try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("Terminating.")
-    thread_running = False
-    sys.exit(0)
+if __name__ == "__main__":
+    in_ports = rtmidi.MidiOut().get_ports()
+    out_ports = rtmidi.MidiOut().get_ports()
+    parser = argparse.ArgumentParser(description="Serial to MIDI bridge")
+    parser.add_argument("--serial_name", required=True, help="Serial port name")
+    parser.add_argument("--baud", type=int, default=115200, help="baud rate")
+    parser.add_argument("--midi_in", type=str, choices=in_ports, default=in_ports[0])
+    parser.add_argument("--midi_out", type=str, choices=out_ports, default=out_ports[0])
+    parser.add_argument("--debug", action="store_true", help="Print all MIDI messages")
+    args = parser.parse_args()
+    bridge = SerialMidiBridge(args.serial_name, args.baud, args.midi_in, args.midi_out)
+    level = logging.DEBUG if args.debug else logging.INFO
+    logging.basicConfig(level=level)
+    bridge.run()

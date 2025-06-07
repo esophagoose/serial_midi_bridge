@@ -3,14 +3,44 @@ import collections
 import logging
 import os
 import time
+from typing import Optional
 
+import enum
 import rtmidi
 import serial
 import serial.tools.list_ports as list_ports
 
 
+class SystemMessage(enum.IntEnum):
+    SYSEX = 0xF0
+    TIME_CODE = 0xF1
+    SONG_POSITION = 0xF2
+    SONG_SELECT = 0xF3
+    TUNE_REQUEST = 0xF6
+    SYSEX_END = 0xF7
+
+
+class ChannelMessage(enum.IntEnum):
+    # Also called Data Messages
+    NOTE_OFF = 0x80
+    NOTE_ON = 0x90
+    POLY_PRESSURE = 0xA0
+    CONTROL_CHANGE = 0xB0
+    PROGRAM_CHANGE = 0xC0
+    CHANNEL_PRESSURE = 0xD0
+    PITCH_BEND = 0xE0
+
+
+is_status_byte = lambda byte: byte >= 0x80
+is_data_byte = lambda byte: byte < 0x80
+
+def bytes_to_hex(message: bytes):
+    hex_str = " ".join(f"{byte:02X}" for byte in message)
+    return f"[{hex_str}]"
+
+
 class SerialMidiBridge:
-    def __init__(self, device_name, baudrate, midi_in_name, midi_out_name, debug=False):
+    def __init__(self, device_name, baudrate, midi_in_name, midi_out_name):
         self.name = device_name
         self.baudrate = baudrate
         self.input_queue = collections.deque()
@@ -18,38 +48,60 @@ class SerialMidiBridge:
 
         self.midi_in = rtmidi.MidiIn()
         self.midi_out = rtmidi.MidiOut()
-        in_port = self.midi_out.get_ports().index(midi_in_name)
+        in_port = self.midi_in.get_ports().index(midi_in_name)
         out_port = self.midi_out.get_ports().index(midi_out_name)
         self.midi_in.open_port(in_port)
         self.midi_out.open_port(out_port)
         self.midi_in.ignore_types(sysex=False, timing=False, active_sense=False)
-        self.midi_in.set_callback(MidiInputHandler(self))
+        self.midi_in.set_callback(lambda message, _: self.write(message))
+        self._input_buffer = b""
         print(
             f"Starting bridge: {device_name} at {baudrate} baud with input {midi_in_name} and output {midi_out_name}"
         )
 
-    def get_midi_length(self, message):
-        opcode = message[0]
-        if opcode >= 0xF4:
+    def _get_system_message_length(self, status_byte) -> Optional[int]:
+        if status_byte == SystemMessage.SYSEX:  # System exclusive
+            index = self._input_buffer.find(SystemMessage.SYSEX_END)
+            return None if index == -1 else index
+        elif status_byte >= SystemMessage.TUNE_REQUEST:
             return 1
-        if opcode in [0xF1, 0xF3]:
+        elif status_byte in [SystemMessage.TIME_CODE, SystemMessage.SONG_SELECT]:
             return 2
-        if opcode == 0xF2:
+        elif status_byte == SystemMessage.SONG_POSITION:
             return 3
-        if opcode == 0xF0:
-            if message[-1] == 0xF7:
-                return len(message)
+        else:
+            logging.error(f"Unknown system message: {status_byte}")
+            return 1
 
-        opcode = opcode & 0xF0
-        if opcode in [0x80, 0x90, 0xA0, 0xB0, 0xE0]:
-            return 3
-        if opcode in [0xC0, 0xD0]:
-            return 2
+    def get_valid_message(self) -> Optional[bytes]:
+        if not self._input_buffer:
+            return None
+        status_byte = self._input_buffer[0]
 
-        return 100
+        # Flush non-status bytes
+        if not is_status_byte(status_byte):
+            self._input_buffer = self._input_buffer[1:]
+            return self.get_valid_message()
+        # System messages
+        if status_byte in SystemMessage:
+            index = self._get_system_message_length(status_byte)
+        else:
+            # Handle channel messages
+            status_byte = status_byte & 0xF0  # Strip channel number
+            index = 3
+            if status_byte in [
+                ChannelMessage.PROGRAM_CHANGE,
+                ChannelMessage.CHANNEL_PRESSURE,
+            ]:
+                index = 2
+        if index is None or len(self._input_buffer) < index:
+            return None
+        message = self._input_buffer[: index]
+        self._input_buffer = self._input_buffer[index :]
+        return message
 
     def write(self, message):
-        logging.debug(f"MIDI -> Serial: {message}")
+        logging.debug(f"MIDI -> Serial: {bytes_to_hex(message)}")
         self.device.write(bytearray(message))
 
     def wait_for_device(self):
@@ -60,31 +112,18 @@ class SerialMidiBridge:
     def run(self):
         self.device = serial.Serial(self.name, self.baudrate, timeout=0.4)
 
-        input_buffer = b""
         while True:
             try:
-                input_buffer += self.device.read()
-                if not input_buffer:
+                self._input_buffer += self.device.read()
+                message = self.get_valid_message()
+                if not message:
                     continue
-
-                message_length = self.get_midi_length(input_buffer)
-                if len(input_buffer) >= message_length:
-                    logging.debug(f"Serial -> MIDI: {input_buffer}")
-                    self.midi_out.send_message(input_buffer[:message_length])
-                    input_buffer = input_buffer[message_length:]
+                logging.debug(f"Serial -> MIDI: {bytes_to_hex(message)}")
+                self.midi_out.send_message(message)
             except serial.serialutil.SerialException:
                 print("Serial device disconnected! Waiting for reconnect ...")
                 self.wait_for_device()
                 print("Reconnected.")
-
-
-class MidiInputHandler(object):
-    def __init__(self, bridge):
-        self.bridge = bridge
-
-    def __call__(self, event, data=None):
-        message, _ = event
-        self.bridge.write(message)
 
 
 def handle_args(args):
@@ -100,13 +139,13 @@ def handle_args(args):
         for port in out_ports:
             print(f" - {port}")
         return False
-    if args.serial_name is None:
+    if args.device is None:
         parser.print_usage()
         print("\nNo serial port specified. Available ports:")
         for port in list_ports.comports():
             print(f" - {port.device} : {port.description}")
         return False
-    if not os.path.exists(args.serial_name):
+    if not os.path.exists(args.device):
         parser.print_usage()
         print("\nSerial port not found. Available ports:")
         for port in list_ports.comports():
@@ -119,11 +158,13 @@ if __name__ == "__main__":
     in_ports = rtmidi.MidiIn().get_ports()
     out_ports = rtmidi.MidiOut().get_ports()
     parser = argparse.ArgumentParser(description="Serial to MIDI bridge")
-    parser.add_argument("--serial_name", help="Serial port name")
-    parser.add_argument("--baud", type=int, default=9600, help="baud rate")
-    parser.add_argument("--midi_in", type=str, choices=in_ports, default=in_ports[0])
-    parser.add_argument("--midi_out", type=str, choices=out_ports, default=out_ports[0])
-    parser.add_argument("--debug", action="store_true", help="Print all MIDI messages")
+    parser.add_argument("-d", "--device", help="Serial port name")
+    parser.add_argument("-b", "--baudrate", type=int, default=9600, help="baud rate")
+    parser.add_argument("-i", "--midi_in", type=str, choices=in_ports)
+    parser.add_argument("-o", "--midi_out", type=str, choices=out_ports)
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Print all MIDI messages"
+    )
     parser.add_argument(
         "-l",
         "--list",
@@ -134,7 +175,7 @@ if __name__ == "__main__":
     ready = handle_args(args)
     if not ready:
         exit(0)
-    level = logging.DEBUG if args.debug else logging.INFO
+    level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level)
-    bridge = SerialMidiBridge(args.serial_name, args.baud, args.midi_in, args.midi_out)
+    bridge = SerialMidiBridge(args.device, args.baudrate, args.midi_in, args.midi_out)
     bridge.run()

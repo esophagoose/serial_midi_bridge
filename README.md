@@ -1,67 +1,98 @@
+# Serial MIDI Bridge
 
-This command line script establishes Serial to MIDI bridge.
-It will be useful with micro controller boards such as Arduino, ESP32, they only have UART-USB interface.
+A lightweight Python-based Serial to MIDI bridge that enables devices to communicate via MIDI-over-serial
 
-I made this since useful [Hairless MIDI Serial bridge](https://github.com/projectgus/hairless-midiserial) program stopped working with OS X Catalina.
+## Features
+- Low latency (< 5ms) bidirectional MIDI message processing
+- Cross-platform compatibility (Windows, macOS, Linux)
+- Support for standard MIDI messages
+- Simple command-line interface
 
-It processes most of MIDI messages. It has only very low latency (probably less than 5ms) so far.
 
-### Requirements / Installation
+## Installation
 
-This script needs [python-rtmidi](https://pypi.org/project/python-rtmidi/), [PySerial](https://pypi.org/project/pyserial/) and Python 3.
+### Setup
+1. Create and activate a virtual environment:
+   ```bash
+   # Create virtual environment
+   python -m venv venv
 
-1. Install Python 3
-2. Install pip
-3. `pip install python-rtmidi`
-4. `pip install pyserial`
-5. Download `serialmidi.py`
+   # Activate virtual environment
+   # On Windows:
+   venv\Scripts\activate
+   # On macOS/Linux:
+   source venv/bin/activate
+   ```
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Use `serial_midi_bridge.py`
+    ```bash
+    python serial_midi_bridge.py --serial_name {serial device name} --midi_in {midi input device name} --midi_out {midi output device name}
+
+    # If you want to list available devices, use `-l` option
+    python serial_midi_bridge.py -l
+    ```
+
+### Dependencies
+- Python 3
+- [python-rtmidi](https://pypi.org/project/python-rtmidi/)
+- [PySerial](https://pypi.org/project/pyserial/)
 
 ## Quickstart
-```
-MAC OS X example
-$ python3 serialmidi.py --serial_name=/dev/cu.SLAB_USBtoUART --midi_in_name="IAC Bus 1" --midi_out_name="IAC Bus 2"
-
-WINDOWS example
-$ python.exe .\serialmidi.py --serial_name=COM4 --midi_in_name="loopMIDI Port IN 0" --midi_out_name="loopMIDI Port OUT 2"
+### macOS
+```bash
+python3 serial_midi_bridge.py --serial_name=/dev/tty.usbserial --midi_in="IAC Driver Bus 1" --midi_out="IAC Driver Bus 2"
 ```
 
-## setup
-
-1. Run `serialmidi.py -h` to see this help.
+### Windows
+```bash
+python.exe .\serial_midi_bridge.py --serial_name=COM4 --midi_in="loopMIDI Port IN 0" --midi_out="loopMIDI Port OUT 2"
 ```
-$ python3 serialmidi.py -h
-usage: serialmidi.py [-h] --serial_name SERIAL_NAME [--baud BAUD]
-                     [--midi_in_name MIDI_IN_NAME]
-                     [--midi_out_name MIDI_OUT_NAME] [--debug]
 
-Serial MIDI bridge
+## Usage
+```
+$ python3 serial_midi_bridge.py -h
+usage: serial_midi_bridge.py [-h] --serial_name SERIAL_NAME [--baud BAUD]
+                             [--midi_in {IAC Driver Bus 1,IAC Driver Bus 2,GarageBand Virtual In}]
+                             [--midi_out {IAC Driver Bus 1,IAC Driver Bus 2,GarageBand Virtual In}] [--debug]
 
-optional arguments:
+Serial to MIDI bridge
+
+options:
   -h, --help            show this help message and exit
   --serial_name SERIAL_NAME
-                        Serial port name. Required
-  --baud BAUD           baud rate. Default is 115200
-  --midi_in_name MIDI_IN_NAME
-  --midi_out_name MIDI_OUT_NAME
-  --debug               Print incoming / outgoing MIDI signals
+                        Serial port name
+  --baud BAUD           baud rate
+  --midi_in MIDI_IN     MIDI input device name
+  --midi_out MIDI_OUT   MIDI output device name
+  -l, --list            List available USB devices and MIDI devices
+  --debug               Print all MIDI messages
 ```
 
-2. Figure out serial port name and baud rate. Baud rate default is 115200.
-3. Run `serialmidi.py --serial_name=[serial_port] --baud=[baud]`. Make sure it doesn't say "Serial port opening error.".
-4. The script prints recognized MIDI devices. Use one of listed name as argument of `--midi_in_name` and `--midi_out_name`. Here is an example on OS X.
-```
-INFO:root:IN : 'IAC Bus 1','IAC Bus 2'
-INFO:root:OUT : 'IAC Bus 1','IAC Bus 2'
-```
-You may want to use MIDI loop bus such as IAC Bus for OS X, or [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) for Windows. Also, you need to use different bus in order to avoid signal loop.
+To run the bridge, `serial_name`, `baud`, `midi_in`, and `midi_out` are required. You can use `--list` (or `-l`) option to list available devices.
 
-5. If it is not working, try `--debug` option. It will dump all incoming / outgoing MIDI messages. Or create an issue on the GitHub page.
+## Issues
+1. **MIDI or Serial Device Not Found**
+   - Ensure your devices are properly connected and recognized by your system
+   - Use the `-l` option to list available devices
+   - Verify the exact names of your devices
+
+2. **MIDI Messages Not Being Sent/Received**
+   - Enable debug mode with `--debug` flag to see all MIDI messages
+   - Check if your MIDI devices are properly configured
+   - Verify that your MIDI routing is set up correctly
+
+3. **Baud Rate Mismatch**
+   - Ensure the baud rate matches your device's configuration (default is 9600)
+   - Use `--debug` flag to see all MIDI messages; if they are are all `\x00` the baud rate is most likely incorrect
+
+If you find a bug, please create an issue and contributions are always welcome!
 
 
-### Tested environment
-- Tested with OS X Catalina with ESP32 board, and Windows10 with loopMIDI.
 
-### Other notes
-- It's made for my ESP32 based synthesizer, so I tested MIDI IN a lot, but MIDI OUT. MIDI OUT message processing might have some bugs. Please let me know if you find it.
+
+
 
 

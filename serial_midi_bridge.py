@@ -34,18 +34,15 @@ class ChannelMessage(enum.IntEnum):
 is_status_byte = lambda byte: byte >= 0x80
 is_data_byte = lambda byte: byte < 0x80
 
-def bytes_to_hex(message: bytes):
+def bytes_to_hex(message: bytes) -> str:
     hex_str = " ".join(f"{byte:02X}" for byte in message)
     return f"[{hex_str}]"
 
 
 class SerialMidiBridge:
-    def __init__(self, device_name, baudrate, midi_in_name, midi_out_name):
+    def __init__(self, device_name: str, baudrate: int, midi_in_name: str, midi_out_name: str) -> None:
         self.name = device_name
         self.baudrate = baudrate
-        self.input_queue = collections.deque()
-        self.output_queue = collections.deque()
-
         self.midi_in = rtmidi.MidiIn()
         self.midi_out = rtmidi.MidiOut()
         in_port = self.midi_in.get_ports().index(midi_in_name)
@@ -59,7 +56,7 @@ class SerialMidiBridge:
             f"Starting bridge: {device_name} at {baudrate} baud with input {midi_in_name} and output {midi_out_name}"
         )
 
-    def _get_system_message_length(self, status_byte) -> Optional[int]:
+    def _get_system_message_length(self, status_byte: int) -> Optional[int]:
         if status_byte == SystemMessage.SYSEX:  # System exclusive
             index = self._input_buffer.find(SystemMessage.SYSEX_END)
             return None if index == -1 else index
@@ -100,16 +97,16 @@ class SerialMidiBridge:
         self._input_buffer = self._input_buffer[index :]
         return message
 
-    def write(self, message):
+    def write(self, message: bytes) -> None:
         logging.debug(f"MIDI -> Serial: {bytes_to_hex(message)}")
         self.device.write(bytearray(message))
 
-    def wait_for_device(self):
+    def wait_for_device(self) -> None:
         while not os.path.exists(self.name):
             time.sleep(0.25)
         self.device = serial.Serial(self.name, self.baudrate, timeout=0.4)
 
-    def run(self):
+    def run(self) -> None:
         self.device = serial.Serial(self.name, self.baudrate, timeout=0.4)
 
         while True:
@@ -126,7 +123,7 @@ class SerialMidiBridge:
                 print("Reconnected.")
 
 
-def handle_args(args):
+def handle_args(args: argparse.Namespace) -> bool:
     if args.list:
         parser.print_usage()
         print("\nAvailable Serial Ports:")

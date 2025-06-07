@@ -1,11 +1,10 @@
 import argparse
-import collections
+import enum
 import logging
 import os
 import time
 from typing import Optional
 
-import enum
 import rtmidi
 import serial
 import serial.tools.list_ports as list_ports
@@ -34,26 +33,27 @@ class ChannelMessage(enum.IntEnum):
 is_status_byte = lambda byte: byte >= 0x80
 is_data_byte = lambda byte: byte < 0x80
 
+
 def bytes_to_hex(message: bytes) -> str:
     hex_str = " ".join(f"{byte:02X}" for byte in message)
     return f"[{hex_str}]"
 
 
 class SerialMidiBridge:
-    def __init__(self, device_name: str, baudrate: int, midi_in_name: str, midi_out_name: str) -> None:
+    def __init__(self, device_name: str, baudrate: int, midi_in: str, midi_out: str):
         self.name = device_name
         self.baudrate = baudrate
         self.midi_in = rtmidi.MidiIn()
         self.midi_out = rtmidi.MidiOut()
-        in_port = self.midi_in.get_ports().index(midi_in_name)
-        out_port = self.midi_out.get_ports().index(midi_out_name)
+        in_port = self.midi_in.get_ports().index(midi_in)
+        out_port = self.midi_out.get_ports().index(midi_out)
         self.midi_in.open_port(in_port)
         self.midi_out.open_port(out_port)
         self.midi_in.ignore_types(sysex=False, timing=False, active_sense=False)
         self.midi_in.set_callback(lambda message, _: self.write(message))
         self._input_buffer = b""
         print(
-            f"Starting bridge: {device_name} at {baudrate} baud with input {midi_in_name} and output {midi_out_name}"
+            f"Starting bridge: {device_name} at {baudrate} baud with input {midi_in} and output {midi_out}"
         )
 
     def _get_system_message_length(self, status_byte: int) -> Optional[int]:
@@ -93,8 +93,8 @@ class SerialMidiBridge:
                 index = 2
         if index is None or len(self._input_buffer) < index:
             return None
-        message = self._input_buffer[: index]
-        self._input_buffer = self._input_buffer[index :]
+        message = self._input_buffer[:index]
+        self._input_buffer = self._input_buffer[index:]
         return message
 
     def write(self, message: bytes) -> None:

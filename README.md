@@ -35,6 +35,9 @@ A lightweight Python-based Serial to MIDI bridge that enables devices to communi
     python serial_midi_bridge.py -l
     ```
 
+### Virtual MIDI Setup
+For instructions on setting up a virtual MIDI device, see [Ableton's "Setting up a virtual MIDI bus"](https://help.ableton.com/hc/en-us/articles/209774225-Setting-up-a-virtual-MIDI-bus) guide
+
 ### Dependencies
 - Python 3
 - [python-rtmidi](https://pypi.org/project/python-rtmidi/)

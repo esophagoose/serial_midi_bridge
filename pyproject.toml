@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "serial-midi-bridge"
+authors = [{name = "esophagoose"}]
+version = "1.0.0"
+description = "A bridge for serial devices and MIDI controllers"
+readme = "README.md"
+requires-python = ">=3.6"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+]
+dependencies = [
+    "pyserial==3.5",
+    "python-rtmidi==1.5.8",
+    "setuptools==80.9.0",
+]

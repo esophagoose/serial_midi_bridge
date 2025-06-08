@@ -123,17 +123,18 @@ class SerialMidiBridge:
                 print("Reconnected.")
 
 
-def handle_args(args: argparse.Namespace) -> bool:
+def handle_args(parser: argparse.ArgumentParser) -> bool:
+    args = parser.parse_args()
     if args.list:
         parser.print_usage()
         print("\nAvailable Serial Ports:")
         for port in list_ports.comports():
             print(f" - {port.device} : {port.description}")
         print("\nAvailable MIDI Input Devices:")
-        for port in in_ports:
+        for port in rtmidi.MidiIn().get_ports():
             print(f" - {port}")
         print("\nAvailable MIDI Output Devices:")
-        for port in out_ports:
+        for port in rtmidi.MidiOut().get_ports():
             print(f" - {port}")
         return False
     if args.device is None:
@@ -151,7 +152,7 @@ def handle_args(args: argparse.Namespace) -> bool:
     return True
 
 
-if __name__ == "__main__":
+def main():
     in_ports = rtmidi.MidiIn().get_ports()
     out_ports = rtmidi.MidiOut().get_ports()
     parser = argparse.ArgumentParser(description="Serial to MIDI bridge")
@@ -169,10 +170,14 @@ if __name__ == "__main__":
         help="List available USB devices and MIDI devices",
     )
     args = parser.parse_args()
-    ready = handle_args(args)
+    ready = handle_args(parser)
     if not ready:
         exit(0)
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level)
     bridge = SerialMidiBridge(args.device, args.baudrate, args.midi_in, args.midi_out)
     bridge.run()
+
+
+if __name__ == "__main__":
+    main()
